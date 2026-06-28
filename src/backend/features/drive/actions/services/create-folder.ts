@@ -4,6 +4,7 @@ import { SyncContext } from '@/apps/sync-engine/config';
 import { Sync } from '@/backend/features/sync';
 import { Addon } from '@/node-win/addon-wrapper';
 import { createPendingItems } from './create-pending-items';
+import { SqliteModule } from '@/infra/sqlite/sqlite.module';
 
 type Props = {
   ctx: SyncContext;
@@ -19,6 +20,19 @@ export async function createFolder({ ctx, path, parentUuid }: Props) {
 
     await Addon.convertToPlaceholder({ path, placeholderId: `FOLDER:${folder.uuid}` });
 
+    // NEW: Check if folder already exists in SQLite
+    const existing = await SqliteModule.FolderModule.getByUuid({ uuid: folder.uuid });
+
+    if (!existing.error) {
+      // Folder already existed → skip recursion
+      ctx.logger.debug({
+        msg: 'Skipping recursion: folder already exists in SQLite',
+        path,
+      });
+      return;
+    }
+
+    // Folder is new → recurse
     await createPendingItems({
       ctx,
       parentUuid: folder.uuid,
