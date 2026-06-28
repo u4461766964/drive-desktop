@@ -21,9 +21,14 @@ export async function createPendingItems({ ctx, parentUuid, parentPath, isFirstE
       },
     });
 
+    // NEW: Only scan files during first execution
+    const fileScan = isFirstExecution
+      ? createPendingFiles({ ctx, files, parentUuid })
+      : Promise.resolve();
+
     await Promise.all([
       createPendingFolders({ ctx, folders, parentUuid, isFirstExecution }),
-      createPendingFiles({ ctx, files, parentUuid }),
+      fileScan,
     ]);
   } catch (error) {
     ctx.logger.error({ msg: 'Error creating pending items', parentPath, error });
