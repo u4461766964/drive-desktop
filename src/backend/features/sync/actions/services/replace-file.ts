@@ -7,6 +7,73 @@ import { createOrUpdateFile } from '@/backend/features/remote-sync/update-in-sql
 import { driveServerWip } from '@/infra/drive-server-wip/drive-server-wip.module';
 import { handleFileUploadSizeExceeded } from '../../../user/file-size-limit/handle-file-upload-size-exceeded';
 import { uploadFile } from './upload-file';
+import { SqliteModule } from '@/infra/sqlite/sqlite.module';
+
+type Props = {
+  ctx: CommonContext;
+  path: AbsolutePath;
+  uuid: FileUuid;
+};
+
+export async function replaceFile({ ctx, path, uuid }: Props) {
+  // NEW: Check if file exists in SQLite
+  const existing = await SqliteModule.FileModule.getByUuid({ uuid });
+
+  if (!existing.error) {
+    // If size and mtime match, skip replace
+    const { size, mtime } = await ctx.fs.stat(path);
+    if (existing.data.size === size && existing.data.modificationTime === mtime.toISOString()) {
+      ctx.logger.debug({
+        msg: 'Skipping replace: file unchanged in SQLite',
+        path,
+      });
+      return;
+    }
+  }
+
+  const upload = await uploadFile({ ctx, path });
+
+  if (!upload) return;
+
+  const res = await driveServerWip.files.replaceFile({
+    ctx,
+    context: {
+      path,
+      uuid,
+      contentsId: upload.contentsId,
+      size: upload.size,
+      modificationTime: upload.mtime.toISOString(),
+    },
+  });
+
+  if (res.error) {
+    if (res.error.code === 'FILE_UPLOAD_SIZE_EXCEEDED') {
+      handleFileUploadSizeExceeded({ path, size: upload.size });
+      ctx.logger.warn({
+        msg: 'File size exceeds upload limit',
+        path,
+        size: upload.size,
+      });
+      return;
+    }
+
+    LocalSync.SyncState.addItem({ action: 'MODIFY_ERROR', path });
+    return;
+  }
+
+  LocalSync.SyncState.addItem({ action: 'MODIFIED', path });
+  void createAndUploadThumbnail({ ctx, path, fileUuid: res.data.uuid });
+  return await createOrUpdateFile({ ctx, fileDto: res.data });
+}
+import { AbsolutePath } from '@internxt/drive-desktop-core/build/backend';
+import { FileUuid } from '@/apps/main/database/entities/DriveFile';
+import { createAndUploadThumbnail } from '@/apps/main/thumbnail/create-and-upload-thumbnail';
+import { CommonContext } from '@/apps/sync-engine/config';
+import { LocalSync } from '@/backend/features';
+import { createOrUpdateFile } from '@/backend/features/remote-sync/update-in-sqlite/create-or-update-file';
+import { driveServerWip } from '@/infra/drive-server-wip/drive-server-wip.module';
+import { handleFileUploadSizeExceeded } from '../../../user/file-size-limit/handle-file-upload-size-exceeded';
+import { uploadFile } from './upload-file';
 
 type Props = {
   ctx: CommonContext;
