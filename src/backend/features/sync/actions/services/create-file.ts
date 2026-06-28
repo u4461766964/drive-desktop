@@ -11,6 +11,8 @@ import { EncryptionVersion } from '@/infra/drive-server-wip/defs';
 import { driveServerWip } from '@/infra/drive-server-wip/drive-server-wip.module';
 import { CreateFileBody } from '@/infra/drive-server-wip/services/files/create-file';
 import { uploadFile } from './upload-file';
+import { SqliteModule } from '@/infra/sqlite/sqlite.module';
+import { basename } from 'node:path';
 
 type Props = {
   ctx: CommonContext;
@@ -23,6 +25,21 @@ export async function createFile({ ctx, path, parentUuid }: Props) {
 
   if (tempFile) {
     ctx.logger.debug({ msg: 'File is temporary, skipping', path });
+    return;
+  }
+
+  // NEW: SQLite existence check
+  const nameWithExtension = basename(path);
+  const existing = await SqliteModule.FileModule.getByName({
+    parentUuid,
+    nameWithExtension,
+  });
+
+  if (!existing.error) {
+    ctx.logger.debug({
+      msg: 'Skipping sync createFile: already exists in SQLite',
+      path,
+    });
     return;
   }
 
